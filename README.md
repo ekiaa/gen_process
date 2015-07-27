@@ -1,2 +1,9 @@
-# gen_process
-Gen_process behaviour
+gen_process
+=====
+
+An OTP application
+
+Build
+-----
+
+    $ rebar3 compile
