@@ -7,7 +7,7 @@
 behaviour_info(callbacks) ->
 	[
 		{init, 1},
-		{handle_msg, 2},
+		{handle_msg, 3},
 		{terminate, 2}
 	].
 
@@ -17,60 +17,78 @@ start_link(Module, Args) ->
 init(Parent, {Module, Args}) ->
 	Deb = sys:debug_options([]),
 	case catch Module:init(Args) of
-		{ok, State} ->
+		{ok, State, Params} ->
 			proc_lib:init_ack(Parent, {ok, self()}),
-			loop(#{module => Module, parent => Parent, deb => Deb, state => State, awaiting => queue:new(), processed => queue:new()});
+			loop(
+				#{
+					module => Module, 
+					parent => Parent, 
+					deb => Deb, 
+					state => State, 
+					params => Params, 
+					awaiting => queue:new(), 
+					processed => queue:new()
+				});
 		Result ->
 			Error = {error, {bad_return, {?MODULE, ?LINE, init, {{Module, init, Args}, Result}}}},
 			proc_lib:init_ack(Parent, Error),
 			erlang:exit(Error)
 	end.
 
-loop(Params) ->
+loop(Process) ->
 	receive
 		{system, From, Request} = _Msg ->
-			#{parent := Parent, deb := Deb} = Params,
-			sys:handle_system_msg(Request, From, Parent, ?MODULE, Deb, Params);
+			#{parent := Parent, deb := Deb} = Process,
+			sys:handle_system_msg(Request, From, Parent, ?MODULE, Deb, Process);
 		Message ->
-			handle(Message, Params)
+			handle(Message, Process)
 	end.
 
-handle(Message, #{module := Module, state := State} = Params) ->
-	case catch Module:handle_msg(Message, State) of
+handle(Message, #{module := Module, state := State, params := Params} = Process) ->
+	case catch Module:handle_msg(State, Message, Params) of
 		ok ->
-			#{awaiting := Awaiting, processed := Processed} = Params,
-			process(Params#{awaiting => queue:join(Awaiting, Processed), processed => queue:new()});
+			join(Process);
 		{ok, NewState} ->
-			#{awaiting := Awaiting, processed := Processed} = Params,
-			process(Params#{state => NewState, awaiting => queue:join(Awaiting, Processed), processed => queue:new()});
+			join(Process#{state => NewState});
+		{ok, NewState, NewParams} ->
+			join(Process#{state => NewState, params => NewParams});
 		put ->
-			#{processed := Processed} = Params,
-			process(Params#{processed => queue:in(Message, Processed)});
+			put(Process);
 		{put, NewState} ->
-			#{processed := Processed} = Params,
-			process(Params#{state => NewState, processed => queue:in(Message, Processed)});
+			put(Process#{state => NewState});
+		{put, NewState, Params} ->
+			put(Process#{state => NewState, params => NewParams});
 		ignore ->
-			process(Params);
+			process(Process);
 		{ignore, NewState} ->
-			process(Params#{state => NewState});
+			process(Process#{state => NewState});
+		{ignore, NewState, NewParams} ->
+			process(Process#{state => NewState, params => NewParams});
 		stop ->
-			terminate(normal, Params);
+			terminate(normal, Process);
 		{stop, Reason} ->
-			terminate(Reason, Params);
+			terminate(Reason, Process);
 		{stop, Reason, NewState} ->
-			terminate(Reason, Params#{state => NewState});
+			terminate(Reason, Process#{state => NewState});
 		Result ->
 			Error = {error, {bad_return, {?MODULE, ?LINE, handle, {{Module, handle_msg, [Message, State]}, Result}}}},
-			terminate(Error, Params)
+			terminate(Error, Process)
 	end.
 
+join(#{processed := Processed} = Process) when queue:is_empty(Processed) ->
+	process(Process);
+join(#{awaiting := Awaiting, processed := Processed} = Process) ->
+	process(Process#{awaiting => queue:join(Awaiting, Processed), processed => queue:new()}).
 
-process(#{awaiting := Awaiting} = Params) ->	
+put(#{processed := Processed} = Process) ->
+	process(Process#{processed => queue:in(Message, Processed)}).
+
+process(#{awaiting := Awaiting} = Process) ->	
 	case queue:out(Awaiting) of
 		{{value, Message}, Rest} ->
-			handle(Message, Params#{awaiting => Rest});
+			handle(Message, Process#{awaiting => Rest});
 		{empty, _} ->
-			loop(Params)
+			loop(Process)
 	end.
 
 terminate(Reason, #{module := Module, state := State}) ->
@@ -90,15 +108,15 @@ terminate(Reason, #{module := Module, state := State}) ->
 			end
 	end.
 
-system_continue(Parent, Deb, Params) ->
-	loop(Params#{parent => Parent, deb => Deb}).
+system_continue(Parent, Deb, Process) ->
+	loop(Process#{parent => Parent, deb => Deb}).
 
-system_terminate(Reason, _Parent, _Deb, Params) ->
-	terminate(Reason, Params).
+system_terminate(Reason, _Parent, _Deb, Process) ->
+	terminate(Reason, Process).
 
-system_get_state(Params) ->
-	{ok, Params, Params}.
+system_get_state(Process) ->
+	{ok, Process, Process}.
 
-system_replace_state(ParamsFun, Params) ->
-	NewParams = ParamsFun(Params),
-	{ok, NewParams, NewParams}.
+system_replace_state(ProcessFun, Process) ->
+	NewProcess = ProcessFun(Process),
+	{ok, NewProcess, NewProcess}.
