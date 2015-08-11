@@ -10,7 +10,7 @@ behaviour_info(callbacks) ->
 	[
 		{init, 1},
 		{handle_msg, 3},
-		{terminate, 2}
+		{terminate, 3}
 	].
 
 start_link(Module, Args) ->
@@ -72,8 +72,10 @@ handle(Message, #{module := Module, state := State, params := Params} = Process)
 			terminate(Reason, Process);
 		{stop, Reason, NewState} ->
 			terminate(Reason, Process#{state => NewState});
+		{stop, Reason, NewState, NewParams} ->
+			terminate(Reason, Process#{state => NewState, params => NewParams});
 		Result ->
-			Error = {error, {bad_return, {?MODULE, ?LINE, handle, {{Module, handle_msg, [Message, State]}, Result}}}},
+			Error = {error, {bad_return, {?MODULE, ?LINE, handle, {{Module, handle_msg, [State, Message, Params]}, Result}}}},
 			terminate(Error, Process)
 	end.
 
@@ -96,8 +98,8 @@ process(#{awaiting := Awaiting} = Process) ->
 			loop(Process)
 	end.
 
-terminate(Reason, #{module := Module, state := State}) ->
-	case catch Module:terminate(Reason, State) of
+terminate(Reason, #{module := Module, state := State, params := Params}) ->
+	case catch Module:terminate(State, Reason, Params) of
 		{'EXIT', R} ->
 			exit(R);
 		_ ->
