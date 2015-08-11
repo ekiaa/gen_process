@@ -1,5 +1,7 @@
 -module(gen_process).
 
+-compile({no_auto_import,[put/2]}).
+
 -export([start_link/2, init/2]).
 
 -export([system_continue/3, system_terminate/4, system_get_state/1, system_replace_state/2, behaviour_info/1]).
@@ -53,11 +55,11 @@ handle(Message, #{module := Module, state := State, params := Params} = Process)
 		{ok, NewState, NewParams} ->
 			join(Process#{state => NewState, params => NewParams});
 		put ->
-			put(Process);
+			put(Message, Process);
 		{put, NewState} ->
-			put(Process#{state => NewState});
-		{put, NewState, Params} ->
-			put(Process#{state => NewState, params => NewParams});
+			put(Message, Process#{state => NewState});
+		{put, NewState, NewParams} ->
+			put(Message, Process#{state => NewState, params => NewParams});
 		ignore ->
 			process(Process);
 		{ignore, NewState} ->
@@ -75,12 +77,15 @@ handle(Message, #{module := Module, state := State, params := Params} = Process)
 			terminate(Error, Process)
 	end.
 
-join(#{processed := Processed} = Process) when queue:is_empty(Processed) ->
-	process(Process);
 join(#{awaiting := Awaiting, processed := Processed} = Process) ->
-	process(Process#{awaiting => queue:join(Awaiting, Processed), processed => queue:new()}).
+	case queue:is_empty(Processed) of
+		true ->
+			process(Process);
+		false ->
+			process(Process#{awaiting => queue:join(Awaiting, Processed), processed => queue:new()})
+	end.
 
-put(#{processed := Processed} = Process) ->
+put(Message, #{processed := Processed} = Process) ->
 	process(Process#{processed => queue:in(Message, Processed)}).
 
 process(#{awaiting := Awaiting} = Process) ->	
